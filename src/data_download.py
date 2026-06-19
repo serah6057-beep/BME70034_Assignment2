@@ -147,7 +147,7 @@ def download_characteristics() -> pd.DataFrame:
     for chunk in pd.read_csv(extracted_path, low_memory=False, chunksize=50000):
         chunk.columns = chunk.columns.str.lower().str.strip()
         if "date" in chunk.columns:
-            chunk["date"] = pd.to_datetime(chunk["date"].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
+            chunk["date"] = pd.to_datetime(chunk["date"].astype(str), format="%Y%m%d") + pd.offsets.MonthEnd(0)
         elif "yyyymm" in chunk.columns:
             chunk["date"] = pd.to_datetime(chunk["yyyymm"].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
             chunk.drop(columns=["yyyymm"], inplace=True)
