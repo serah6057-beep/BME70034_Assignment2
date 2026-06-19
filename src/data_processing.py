@@ -367,7 +367,7 @@ def rolling_splits(
           "meta_test":  DataFrame with [permno, date, me] for portfolio construction
     """
     all_dates = panel["date"].sort_values().unique()
-    all_years = sorted(pd.to_datetime(all_dates).year.unique())
+    all_years = sorted(pd.DatetimeIndex(all_dates).year.unique())
 
     # Start yielding from test_start_year
     for test_year in [y for y in all_years if y >= test_start_year]:
