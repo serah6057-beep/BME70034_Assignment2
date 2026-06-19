@@ -22,7 +22,7 @@ from src.settings import (
     CRSP_FILE, CHARACTERISTICS_FILE, MACRO_FILE, RF_FILE,
     CHARACTERISTIC_COLUMNS, MACRO_COLUMNS,
     TRAIN_YEARS, VALIDATION_YEARS, TEST_START_YEAR,
-    MIN_STOCKS_PER_MONTH, MIN_OBS_PER_STOCK,
+    MIN_STOCKS_PER_MONTH, MIN_OBS_PER_STOCK, DATA_DIR,
     get_logger,
 )
 
@@ -106,20 +106,27 @@ def load_rf() -> pd.Series:
 # =============================================================
 # 2. CROSS-SECTIONAL RANKING AND SCALING  (GKX 2020, Section 2.3)
 # =============================================================
-
-def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str]) -> pd.DataFrame:
-    """
+"""
     GKX (2020) cross-sectional rank-scaling:
       1. Rank each characteristic within month → map to [-1, 1].
       2. Replace remaining missing values with cross-sectional median.
       3. Any still-missing values (entire-month NaN) → 0.
     """
+
+def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str]) -> pd.DataFrame:
+    """
+    GKX (2020) cross-sectional rank-scaling with caching.
+    """
+    cache_file = DATA_DIR / "characteristics_scaled.parquet"
+    if cache_file.exists():
+        logger.info(f"Loading rank-scaled characteristics from cache: {cache_file}")
+        return pd.read_parquet(cache_file)
+
     logger.info("Applying cross-sectional rank scaling...")
 
     def _scale_month(g: pd.DataFrame) -> pd.DataFrame:
         for col in char_cols:
             x = g[col]
-            # If duplicate columns exist, x is a DataFrame — take the first column
             if isinstance(x, pd.DataFrame):
                 x = x.iloc[:, 0]
             if x.notna().sum() < 2:
@@ -134,15 +141,20 @@ def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str]) -> pd.Dat
 
     df = df.groupby("date", group_keys=False).apply(_scale_month)
 
-    # Step 2: fill remaining NaN with cross-sectional median (per month)
+    # Step 2: fill remaining NaN with cross-sectional median
     logger.info("Filling missing values with cross-sectional median...")
     for col in char_cols:
         df[col] = df.groupby("date")[col].transform(
             lambda x: x.fillna(x.median())
         )
 
-    # Step 3: any still-NaN (entire month missing) → 0
-    df[char_cols] = df[char_cols].fillna(0)
+    # Step 3: any still-NaN → 0
+    for col in char_cols:
+        df[col] = df[col].fillna(0)
+
+    # Save cache
+    logger.info(f"Caching rank-scaled characteristics to {cache_file}")
+    df.to_parquet(cache_file, index=False)
 
     return df
 
@@ -150,13 +162,7 @@ def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str]) -> pd.Dat
 # =============================================================
 # 3. MACRO INTERACTION FEATURES  (GKX 2020, Section 2.2)
 # =============================================================
-
-def build_interaction_features(
-    char_df: pd.DataFrame,
-    macro_df: pd.DataFrame,
-    char_cols: list[str],
-) -> pd.DataFrame:
-    """
+"""
     Constructs the full feature matrix by interacting firm characteristics
     with macro predictors as in GKX (2020):
 
@@ -175,15 +181,22 @@ def build_interaction_features(
     Returns:
         DataFrame with [permno, date, <original chars>, <interaction cols>].
     """
+def build_interaction_features(
+    char_df: pd.DataFrame,
+    macro_df: pd.DataFrame,
+    char_cols: list[str],
+) -> pd.DataFrame:
     logger.info("Building macro interaction features...")
 
-    macro_cols = macro_df.columns.tolist()
+    # Add prefix to macro columns to avoid name collision with characteristics
+    macro_renamed = macro_df.add_prefix("macro_")
+    macro_cols = macro_renamed.columns.tolist()
 
-    # Merge macro predictors on date (lagged by 1 month to avoid look-ahead)
-    macro_lagged = macro_df.shift(1)  # use info available at start of each month
+    # Lag by 1 month
+    macro_lagged = macro_renamed.shift(1)
     merged = char_df.join(macro_lagged, on="date", how="left")
 
-    # Build interaction columns: c_it × q_t for each characteristic and macro var
+    # Build interaction columns
     new_cols = {}
     for c in char_cols:
         for m in macro_cols:
@@ -194,8 +207,7 @@ def build_interaction_features(
     result = pd.concat([merged, interaction_df], axis=1)
 
     n_features = len(char_cols) + len(new_cols)
-    logger.info(f"Feature matrix built: {n_features} total features "
-                f"({len(char_cols)} chars + {len(new_cols)} interactions)")
+    logger.info(f"Feature matrix built: {n_features} total features")
     return result
 
 
@@ -208,6 +220,19 @@ def build_panel(
     end:   str = "2025-12-31",
     use_interactions: bool = True,
 ) -> tuple[pd.DataFrame, list[str]]:
+    
+    # Cache file path
+    panel_cache = DATA_DIR / f"panel_{start[:4]}_{end[:4]}.parquet"
+    feat_cache  = DATA_DIR / f"panel_{start[:4]}_{end[:4]}_features.txt"
+
+    if panel_cache.exists() and feat_cache.exists():
+        logger.info(f"Loading cached panel from {panel_cache}")
+        panel = pd.read_parquet(panel_cache)
+        with open(feat_cache) as f:
+            feature_cols = f.read().splitlines()
+        logger.info(f"Panel loaded: {len(panel):,} rows | {len(feature_cols)} features")
+        return panel, feature_cols
+    
     """
     Master function: loads, cleans, merges, and creates the full feature
     panel including macro interactions and SIC industry dummies.
@@ -266,6 +291,13 @@ def build_panel(
         f"{panel['date'].nunique()} months | "
         f"{len(feature_cols)} features"
     )
+
+        # 함수 끝부분 (return 직전) 추가:
+    logger.info(f"Caching panel to {panel_cache}")
+    panel.to_parquet(panel_cache, index=False)
+    with open(feat_cache, "w") as f:
+        f.write("\n".join(feature_cols))
+
     return panel, feature_cols
 
 
