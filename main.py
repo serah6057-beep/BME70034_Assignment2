@@ -1,7 +1,7 @@
 """
 main.py
 -------
-Central pipeline controller for Assignment 3:
+Central pipeline controller for Assignment 2:
 "Replication of Gu, Kelly, and Xiu (2020) – Empirical Asset Pricing via ML"
 
 Usage:
@@ -59,10 +59,16 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--period",
-        choices=["1971_2016", "1971_2025", "both"],
-        default="both",
-        help="Which sample period(s) to run.",
+        "--start",
+        type=str,
+        default="1971-01-01",
+        help="Sample start date. Use 2006-01-01 if compute is limited.",
+    )
+    parser.add_argument(
+        "--end",
+        type=str,
+        default=None,
+        help="Sample end date (YYYY-MM-DD). If None, runs both 2016 and 2025.",
     )
     parser.add_argument(
         "--skip-download",
@@ -80,8 +86,7 @@ def parse_args() -> argparse.Namespace:
         "--models",
         nargs="+",
         default=None,
-        help="Run only specific models (e.g., --models OLS+H RF NN2). "
-             "Default: all models.",
+        help="Run only specific models (e.g., --models OLS+H RF NN2).",
     )
     return parser.parse_args()
 
@@ -94,19 +99,9 @@ def run_pipeline(
     period_label: str,
     models: list[str],
     use_cache: bool = True,
+    start: str = "1971-01-01",
+    end: str = "2025-12-31",
 ) -> None:
-    """
-    Runs the full pipeline for a single sample period.
-
-    Args:
-        period_label: One of the keys in SAMPLE_PERIODS (e.g., "1971_2016").
-        models:       List of model names to include.
-        use_cache:    Whether to reuse cached OOS predictions.
-    """
-    period  = SAMPLE_PERIODS[period_label]
-    start   = period["start"]
-    end     = period["end"]
-
     logger.info("=" * 70)
     logger.info(f"RUNNING PIPELINE: {period_label}  [{start} → {end}]")
     logger.info(f"Models: {models}")
@@ -192,19 +187,30 @@ def main() -> None:
     # -------------------------------------------------------
     # Step 2: Determine which sample periods to run
     # -------------------------------------------------------
-    if args.period == "both":
-        periods = ["1971_2016", "1971_2025"]
+    start = args.start
+    if args.end:
+        # Single period with custom start/end
+        end_year = args.end[:4]
+        start_year = start[:4]
+        period_label = f"{start_year}_{end_year}"
+        periods = [(start, args.end, period_label)]
     else:
-        periods = [args.period]
+        # Default: run both end dates
+        periods = [
+            (start, "2016-12-31", f"{start[:4]}_2016"),
+            (start, "2025-12-31", f"{start[:4]}_2025"),
+        ]
 
     # -------------------------------------------------------
     # Step 3-5: Run pipeline for each period
     # -------------------------------------------------------
-    for period_label in periods:
+    for start, end, period_label in periods:
         run_pipeline(
             period_label=period_label,
             models=models,
             use_cache=not args.no_cache,
+            start=start,
+            end=end,
         )
 
     logger.info("=" * 70)
