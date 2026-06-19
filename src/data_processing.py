@@ -187,8 +187,7 @@ def build_interaction_features(
     char_cols: list[str],
 ) -> pd.DataFrame:
     """
-    Build macro interaction features using parquet caching to avoid RAM overflow.
-    Processes one macro variable at a time and writes to disk.
+    Build macro interaction features using numpy arrays for memory efficiency.
     """
     cache_file = DATA_DIR / "characteristics_with_interactions.parquet"
     if cache_file.exists():
@@ -203,15 +202,43 @@ def build_interaction_features(
     macro_lagged = macro_renamed.shift(1)
 
     # Merge macro into char_df
-    result = char_df.join(macro_lagged, on="date", how="left")
+    merged = char_df.join(macro_lagged, on="date", how="left")
 
-    # Build interactions one macro at a time, append to result in place
+    # Save merged baseline to disk first (frees up RAM)
+    base_cache = DATA_DIR / "_tmp_merged_base.parquet"
+    merged.to_parquet(base_cache, index=False)
+
+    # Build interactions one macro at a time and save chunk by chunk
+    logger.info("Computing interactions per macro variable...")
+    
+    # Extract numpy arrays for fast computation
+    char_arr = merged[char_cols].values.astype("float32")  # (N, P)
+    
+    interaction_cols = []
+    interaction_data = []
+
     for m in macro_cols:
         logger.info(f"  Building interactions with {m}...")
-        m_values = result[m].values
-        for c in char_cols:
-            col_name = f"{c}_x_{m}"
-            result[col_name] = result[c].values * m_values
+        m_values = merged[m].values.astype("float32").reshape(-1, 1)  # (N, 1)
+        # Vectorized: multiply all char columns by macro variable at once
+        inter = char_arr * m_values  # (N, P)
+        for i, c in enumerate(char_cols):
+            interaction_cols.append(f"{c}_x_{m}")
+        interaction_data.append(inter)
+
+    # Concat all interactions in one go
+    logger.info("Combining interaction matrix...")
+    all_interactions = np.concatenate(interaction_data, axis=1)  # (N, P*K)
+    del interaction_data, char_arr
+
+    interaction_df = pd.DataFrame(
+        all_interactions, columns=interaction_cols, index=merged.index
+    )
+    del all_interactions
+
+    # Concat with merged (single concat is fast and not fragmented)
+    result = pd.concat([merged, interaction_df], axis=1)
+    del merged, interaction_df
 
     n_features = len(char_cols) * (len(macro_cols) + 1)
     logger.info(f"Feature matrix built: {n_features} total features")
@@ -219,6 +246,9 @@ def build_interaction_features(
     # Cache to disk
     logger.info(f"Caching interaction features to {cache_file}")
     result.to_parquet(cache_file, index=False)
+
+    # Clean up temp file
+    base_cache.unlink()
 
     return result
 
