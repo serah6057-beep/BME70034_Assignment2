@@ -107,37 +107,38 @@ def load_rf() -> pd.Series:
 
 def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str]) -> pd.DataFrame:
     """
-    Applies the GKX (2020) cross-sectional rank-scaling transformation:
-      1. Within each month, rank each characteristic cross-sectionally.
-      2. Map ranks to [-1, 1] interval.
-      3. Winsorize at the 1st and 99th percentile before ranking.
-
-    Args:
-        df:        Panel with [permno, date, char_cols...].
-        char_cols: List of characteristic column names to transform.
-
-    Returns:
-        DataFrame with same shape; char_cols replaced by scaled values.
+    GKX (2020) cross-sectional rank-scaling:
+      1. Rank each characteristic within month → map to [-1, 1].
+      2. Replace remaining missing values with cross-sectional median.
+      3. Any still-missing values (entire-month NaN) → 0.
     """
     logger.info("Applying cross-sectional rank scaling...")
 
     def _scale_month(g: pd.DataFrame) -> pd.DataFrame:
-        """Scales one cross-section (single month)."""
         for col in char_cols:
             x = g[col]
             if x.notna().sum() < 2:
                 continue
-            # Winsorize at 1%–99%
             lo, hi = x.quantile([0.01, 0.99])
             x = x.clip(lower=lo, upper=hi)
-            # Rank and rescale to [-1, 1]
             r = x.rank(method="average", na_option="keep")
             n = r.notna().sum()
-            x_scaled = 2 * (r - 1) / (n - 1) - 1  # maps [1, n] → [-1, 1]
+            x_scaled = 2 * (r - 1) / (n - 1) - 1
             g[col] = x_scaled
         return g
 
     df = df.groupby("date", group_keys=False).apply(_scale_month)
+
+    # Step 2: fill remaining NaN with cross-sectional median (per month)
+    logger.info("Filling missing values with cross-sectional median...")
+    for col in char_cols:
+        df[col] = df.groupby("date")[col].transform(
+            lambda x: x.fillna(x.median())
+        )
+
+    # Step 3: any still-NaN (entire month missing) → 0
+    df[char_cols] = df[char_cols].fillna(0)
+
     return df
 
 
@@ -203,20 +204,9 @@ def build_panel(
     use_interactions: bool = True,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
-    Master function: loads, cleans, and merges all data into a single
-    model-ready panel.
-
-    Args:
-        start:            Sample start date.
-        end:              Sample end date.
-        use_interactions: Whether to add macro interaction features.
-
-    Returns:
-        (panel_df, feature_cols) where:
-          - panel_df has [permno, date, ret, me, <feature_cols>]
-          - feature_cols is the ordered list of predictor column names
+    Master function: loads, cleans, merges, and creates the full feature
+    panel including macro interactions and SIC industry dummies.
     """
-    # Load raw components
     crsp_df  = load_crsp()
     char_df  = load_characteristics()
     macro_df = load_macro()
@@ -227,36 +217,43 @@ def build_panel(
     char_df  = char_df[(char_df["date"] >= start) & (char_df["date"] <= end)]
     macro_df = macro_df[(macro_df.index >= start) & (macro_df.index <= end)]
 
-    # Identify which char columns are actually present
+    # Identify available characteristics
     char_cols_avail = [c for c in CHARACTERISTIC_COLUMNS if c in char_df.columns]
 
-    # Rank-scale characteristics cross-sectionally
+    # Rank-scale characteristics
     char_df = rank_scale_characteristics(char_df, char_cols_avail)
 
-    # Optionally add macro interactions
+    # Optional macro interactions
     if use_interactions:
         char_df = build_interaction_features(char_df, macro_df, char_cols_avail)
 
-    # Determine full feature column list
-    feature_cols = [c for c in char_df.columns if c not in ["permno", "date"]]
-
-    # Merge CRSP returns with characteristics
-    panel = crsp_df[["permno", "date", "ret", "me"]].merge(
+    # Merge CRSP with characteristics
+    panel = crsp_df[["permno", "date", "ret", "me", "siccd"]].merge(
         char_df,
         on=["permno", "date"],
         how="inner",
     )
 
-    # Merge risk-free rate; compute excess return
+    # Build SIC2 industry dummies (first 2 digits of SIC code, 74 categories per GKX)
+    logger.info("Building SIC2 industry dummies...")
+    panel["sic2"] = (panel["siccd"] // 100).astype("Int64")
+    sic_dummies = pd.get_dummies(panel["sic2"], prefix="sic2", dtype=float)
+    panel = pd.concat([panel.drop(columns=["sic2", "siccd"]), sic_dummies], axis=1)
+
+    # Merge risk-free; compute excess return
     panel = panel.join(rf, on="date", how="left")
     panel["ret_excess"] = panel["ret"] - panel["RF"]
 
-    # Drop months with too few stocks
+    # Drop thin months
     counts = panel.groupby("date")["permno"].transform("count")
     panel  = panel[counts >= MIN_STOCKS_PER_MONTH]
 
-    # Align to month-end and sort
     panel = panel.sort_values(["date", "permno"]).reset_index(drop=True)
+
+    # Final feature columns = everything except identifiers/targets
+    non_feat = {"permno", "date", "ret", "ret_excess", "me", "RF",
+                "shrcd", "exchcd", "siccd", "log_me", "sic2"}
+    feature_cols = [c for c in panel.columns if c not in non_feat]
 
     logger.info(
         f"Panel built: {len(panel):,} stock-month obs | "

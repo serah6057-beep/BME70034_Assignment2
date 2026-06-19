@@ -175,6 +175,8 @@ def download_characteristics() -> pd.DataFrame:
 def download_macro_predictors() -> pd.DataFrame:
     """
     Downloads Welch-Goyal macro predictors via the tidyfinance package.
+    Keeps only the 8 variables used in GKX (2020): dp, ep, bm, ntis,
+    tbl, tms, dfy, svar.
     """
     if MACRO_FILE.exists():
         logger.info(f"Loading macro predictors from cache: {MACRO_FILE}")
@@ -193,7 +195,7 @@ def download_macro_predictors() -> pd.DataFrame:
     # Normalize column names
     df.columns = df.columns.str.lower().str.strip()
 
-    # Set date index
+    # Set date index (tidyfinance returns 'month' column)
     if "month" in df.columns:
         df["date"] = pd.to_datetime(df["month"]) + pd.offsets.MonthEnd(0)
         df = df.set_index("date").drop(columns=["month"])
@@ -203,10 +205,10 @@ def download_macro_predictors() -> pd.DataFrame:
 
     df = df.sort_index()
 
-    # Derived columns
-    if "lty" in df.columns and "tbl" in df.columns:
+    # Compute derived columns if not already present
+    if "tms" not in df.columns and "lty" in df.columns and "tbl" in df.columns:
         df["tms"] = df["lty"] - df["tbl"]
-    if "baa" in df.columns and "aaa" in df.columns:
+    if "dfy" not in df.columns and "baa" in df.columns and "aaa" in df.columns:
         df["dfy"] = df["baa"] - df["aaa"]
 
     df.to_parquet(MACRO_FILE)

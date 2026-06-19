@@ -113,24 +113,17 @@ CHARACTERISTIC_COLUMNS = [
 
 # =============================================================
 # MACRO PREDICTORS (Welch-Goyal 2008; used in GKX 2020)
-# These are time-series macro variables interacted with all
-# firm-level characteristics to form the full feature set.
+# Exactly 8 variables as specified in GKX (2020), p. 2248
 # =============================================================
 MACRO_COLUMNS = [
     "dp",        # Dividend-price ratio (log)
-    "dy",        # Dividend yield (log)
     "ep",        # Earnings-price ratio (log)
-    "de",        # Dividend-earnings ratio (log)
-    "rvol",      # Stock variance
     "bm",        # Book-to-market ratio
     "ntis",      # Net equity expansion
     "tbl",       # T-bill rate
-    "lty",       # Long-term yield
-    "ltr",       # Long-term return
-    "tms",       # Term spread
-    "dfy",       # Default yield spread
-    "dfr",       # Default return spread
-    "infl",      # Inflation
+    "tms",       # Term spread (lty - tbl)
+    "dfy",       # Default yield spread (baa - aaa)
+    "svar",      # Stock variance
 ]
 
 # =============================================================
@@ -160,11 +153,11 @@ ENET_PARAMS = {
 
 # --- Random Forest (RF) ---
 RF_PARAMS = {
-    "n_estimators":       300,
-    "max_features_grid":  [5, 10, "sqrt"],  # Tuned on validation set
-    "min_samples_leaf_grid": [1000, 2000, 5000],
-    "n_jobs":             -1,
-    "random_state":       42,
+    "n_estimators":           300,                       # paper fixes at 300
+    "max_features_grid":      [3, 5, 10, 20, 30, 50],   # paper grid
+    "min_samples_leaf_grid":  [5000, 10000],            # paper grid
+    "n_jobs":                 -1,
+    "random_state":           42,
 }
 
 # --- Neural Networks (NN2 = 2 hidden layers, NN4 = 4 hidden layers) ---
