@@ -15,6 +15,7 @@ IMPORTANT: Raw files are saved to data/ which is git-ignored.
 """
 
 import os
+from dotenv import load_dotenv
 import io
 import time
 import zipfile
@@ -57,6 +58,7 @@ def download_crsp(start: str = "1971-01-01", end: str = "2025-12-31") -> pd.Data
         logger.info(f"Loading CRSP data from cache: {CRSP_FILE}")
         return pd.read_parquet(CRSP_FILE)
 
+    load_dotenv()
     logger.info("Downloading CRSP monthly data from WRDS...")
     try:
         import wrds
@@ -64,7 +66,10 @@ def download_crsp(start: str = "1971-01-01", end: str = "2025-12-31") -> pd.Data
         raise ImportError("Install 'wrds' package: pip install wrds")
 
     # Connect to WRDS (requires WRDS account + ~/.pgpass or env vars)
-    db = wrds.Connection()
+    db = wrds.Connection(
+        wrds_username=os.getenv("WRDS_USERNAME"),
+        wrds_password=os.getenv("WRDS_PASSWORD"),
+    )
 
     query = f"""
         SELECT
