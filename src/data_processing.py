@@ -71,6 +71,8 @@ def load_characteristics() -> pd.DataFrame:
 
     keep_cols = ["permno", "date"] + available
     df = df[keep_cols]
+    # Remove duplicate columns if any exist
+    df = df.loc[:, ~df.columns.duplicated()]
     logger.info(f"Characteristics loaded: {len(available)} features, {len(df):,} rows")
     return df
 
@@ -117,6 +119,9 @@ def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str]) -> pd.Dat
     def _scale_month(g: pd.DataFrame) -> pd.DataFrame:
         for col in char_cols:
             x = g[col]
+            # If duplicate columns exist, x is a DataFrame — take the first column
+            if isinstance(x, pd.DataFrame):
+                x = x.iloc[:, 0]
             if x.notna().sum() < 2:
                 continue
             lo, hi = x.quantile([0.01, 0.99])
