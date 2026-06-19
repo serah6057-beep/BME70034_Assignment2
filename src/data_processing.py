@@ -113,11 +113,11 @@ def load_rf() -> pd.Series:
       3. Any still-missing values (entire-month NaN) → 0.
     """
 
-def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str]) -> pd.DataFrame:
+def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str], start: str = "1971") -> pd.DataFrame:
+    cache_file = DATA_DIR / f"characteristics_scaled_{start[:4]}.parquet"
     """
     GKX (2020) cross-sectional rank-scaling with caching.
     """
-    cache_file = DATA_DIR / "characteristics_scaled.parquet"
     if cache_file.exists():
         logger.info(f"Loading rank-scaled characteristics from cache: {cache_file}")
         return pd.read_parquet(cache_file)
@@ -185,16 +185,17 @@ def build_interaction_features(
     char_df: pd.DataFrame,
     macro_df: pd.DataFrame,
     char_cols: list[str],
+    start: str = "1971",
 ) -> pd.DataFrame:
+    cache_file = DATA_DIR / f"characteristics_with_interactions_{start[:4]}.parquet"
     """
     Build macro interaction features using numpy arrays for memory efficiency.
     """
-    cache_file = DATA_DIR / "characteristics_with_interactions.parquet"
     if cache_file.exists():
         logger.info(f"Loading interaction features from cache: {cache_file}")
         return pd.read_parquet(cache_file)
 
-    logger.info("Building macro interaction features (memory-efficient)...")
+    logger.info("Building macro interaction features (chunked to disk)...")
 
     # Rename macro columns to avoid collision
     macro_renamed = macro_df.add_prefix("macro_")
@@ -204,51 +205,55 @@ def build_interaction_features(
     # Merge macro into char_df
     merged = char_df.join(macro_lagged, on="date", how="left")
 
-    # Save merged baseline to disk first (frees up RAM)
-    base_cache = DATA_DIR / "_tmp_merged_base.parquet"
-    merged.to_parquet(base_cache, index=False)
+    # Save base (chars + macros, no interactions yet) to disk
+    base_file = DATA_DIR / "_tmp_base.parquet"
+    logger.info("  Saving base panel (chars + macros) to disk...")
+    merged.to_parquet(base_file, index=False)
 
-    # Build interactions one macro at a time and save chunk by chunk
-    logger.info("Computing interactions per macro variable...")
-    
-    # Extract numpy arrays for fast computation
-    char_arr = merged[char_cols].values.astype("float32")  # (N, P)
-    
-    interaction_cols = []
-    interaction_data = []
+    # Extract char array once (smaller, stays in RAM)
+    char_arr = merged[char_cols].values.astype("float32")
+    n_rows = len(merged)
 
+    # Save IDs for later merging
+    id_cols = [c for c in ["permno", "date"] if c in merged.columns]
+    
+    # For each macro, compute interactions and save to separate parquet
+    tmp_files = []
     for m in macro_cols:
         logger.info(f"  Building interactions with {m}...")
-        m_values = merged[m].values.astype("float32").reshape(-1, 1)  # (N, 1)
-        # Vectorized: multiply all char columns by macro variable at once
+        m_values = merged[m].values.astype("float32").reshape(-1, 1)
         inter = char_arr * m_values  # (N, P)
-        for i, c in enumerate(char_cols):
-            interaction_cols.append(f"{c}_x_{m}")
-        interaction_data.append(inter)
+        
+        cols = [f"{c}_x_{m}" for c in char_cols]
+        inter_df = pd.DataFrame(inter, columns=cols)
+        
+        tmp = DATA_DIR / f"_tmp_inter_{m}.parquet"
+        inter_df.to_parquet(tmp, index=False)
+        tmp_files.append(tmp)
+        del inter, inter_df
 
-    # Concat all interactions in one go
-    logger.info("Combining interaction matrix...")
-    all_interactions = np.concatenate(interaction_data, axis=1)  # (N, P*K)
-    del interaction_data, char_arr
+    del char_arr, merged
 
-    interaction_df = pd.DataFrame(
-        all_interactions, columns=interaction_cols, index=merged.index
-    )
-    del all_interactions
-
-    # Concat with merged (single concat is fast and not fragmented)
-    result = pd.concat([merged, interaction_df], axis=1)
-    del merged, interaction_df
+    # Now reassemble: load base + each interaction file column-by-column
+    logger.info("  Reassembling full interaction matrix from disk...")
+    result = pd.read_parquet(base_file)
+    for tmp in tmp_files:
+        chunk = pd.read_parquet(tmp)
+        for col in chunk.columns:
+            result[col] = chunk[col].values
+        del chunk
 
     n_features = len(char_cols) * (len(macro_cols) + 1)
     logger.info(f"Feature matrix built: {n_features} total features")
 
-    # Cache to disk
+    # Cache final result
     logger.info(f"Caching interaction features to {cache_file}")
     result.to_parquet(cache_file, index=False)
 
-    # Clean up temp file
-    base_cache.unlink()
+    # Clean up temp files
+    base_file.unlink()
+    for tmp in tmp_files:
+        tmp.unlink()
 
     return result
 
