@@ -174,35 +174,36 @@ def download_characteristics() -> pd.DataFrame:
 
 def download_macro_predictors() -> pd.DataFrame:
     """
-    Downloads Welch-Goyal (2008) macro predictors used in GKX 2020.
-    Source: Amit Goyal's website (PredictorData2023.xlsx).
+    Downloads Welch-Goyal macro predictors via the tidyfinance package.
     """
     if MACRO_FILE.exists():
         logger.info(f"Loading macro predictors from cache: {MACRO_FILE}")
         return pd.read_parquet(MACRO_FILE)
 
-    # Goyal's current data file (updated periodically)
-    url = "https://sites.google.com/view/agoyal145/PredictorData2023.xlsx?attredirects=0&d=1"
-    logger.info("Downloading Welch-Goyal macro predictors from Goyal's site...")
+    import tidyfinance as tf
+    logger.info("Downloading Welch-Goyal macro predictors via tidyfinance...")
 
-    try:
-        df = pd.read_excel(url, sheet_name="Monthly")
-    except Exception as e:
-        logger.warning(f"Goyal URL failed: {e}. Trying GitHub mirror...")
-        # GitHub mirror as fallback
-        url = "https://raw.githubusercontent.com/OS-Macro/macro-predictors/main/PredictorData2023.csv"
-        df = pd.read_csv(url)
+    df = tf.download_data(
+        domain="macro_predictors",
+        dataset="monthly",
+        start_date="1960-01-01",
+        end_date="2025-12-31",
+    )
 
     # Normalize column names
     df.columns = df.columns.str.lower().str.strip()
 
-    # Date column handling
-    date_col = "yyyymm" if "yyyymm" in df.columns else "date"
-    df["date"] = pd.to_datetime(df[date_col].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
-    df = df.set_index("date").drop(columns=[date_col], errors="ignore")
+    # Set date index
+    if "month" in df.columns:
+        df["date"] = pd.to_datetime(df["month"]) + pd.offsets.MonthEnd(0)
+        df = df.set_index("date").drop(columns=["month"])
+    elif "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
+        df = df.set_index("date")
+
     df = df.sort_index()
 
-    # Compute derived columns used in GKX
+    # Derived columns
     if "lty" in df.columns and "tbl" in df.columns:
         df["tms"] = df["lty"] - df["tbl"]
     if "baa" in df.columns and "aaa" in df.columns:
