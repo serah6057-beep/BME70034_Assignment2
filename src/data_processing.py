@@ -186,28 +186,40 @@ def build_interaction_features(
     macro_df: pd.DataFrame,
     char_cols: list[str],
 ) -> pd.DataFrame:
-    logger.info("Building macro interaction features...")
+    """
+    Build macro interaction features using parquet caching to avoid RAM overflow.
+    Processes one macro variable at a time and writes to disk.
+    """
+    cache_file = DATA_DIR / "characteristics_with_interactions.parquet"
+    if cache_file.exists():
+        logger.info(f"Loading interaction features from cache: {cache_file}")
+        return pd.read_parquet(cache_file)
 
-    # Add prefix to macro columns to avoid name collision with characteristics
+    logger.info("Building macro interaction features (memory-efficient)...")
+
+    # Rename macro columns to avoid collision
     macro_renamed = macro_df.add_prefix("macro_")
     macro_cols = macro_renamed.columns.tolist()
-
-    # Lag by 1 month
     macro_lagged = macro_renamed.shift(1)
-    merged = char_df.join(macro_lagged, on="date", how="left")
 
-    # Build interaction columns
-    new_cols = {}
-    for c in char_cols:
-        for m in macro_cols:
+    # Merge macro into char_df
+    result = char_df.join(macro_lagged, on="date", how="left")
+
+    # Build interactions one macro at a time, append to result in place
+    for m in macro_cols:
+        logger.info(f"  Building interactions with {m}...")
+        m_values = result[m].values
+        for c in char_cols:
             col_name = f"{c}_x_{m}"
-            new_cols[col_name] = merged[c] * merged[m]
+            result[col_name] = result[c].values * m_values
 
-    interaction_df = pd.DataFrame(new_cols, index=merged.index)
-    result = pd.concat([merged, interaction_df], axis=1)
-
-    n_features = len(char_cols) + len(new_cols)
+    n_features = len(char_cols) * (len(macro_cols) + 1)
     logger.info(f"Feature matrix built: {n_features} total features")
+
+    # Cache to disk
+    logger.info(f"Caching interaction features to {cache_file}")
+    result.to_parquet(cache_file, index=False)
+
     return result
 
 
@@ -292,7 +304,6 @@ def build_panel(
         f"{len(feature_cols)} features"
     )
 
-        # 함수 끝부분 (return 직전) 추가:
     logger.info(f"Caching panel to {panel_cache}")
     panel.to_parquet(panel_cache, index=False)
     with open(feat_cache, "w") as f:
