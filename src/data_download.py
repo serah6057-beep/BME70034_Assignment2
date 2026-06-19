@@ -73,28 +73,28 @@ def download_crsp(start: str = "1971-01-01", end: str = "2025-12-31") -> pd.Data
     db = wrds.Connection()
 
     query = f"""
-        SELECT
-            a.permno,
-            a.date,
-            a.ret,
-            a.retx,           -- return excluding dividends
-            ABS(a.prc) AS prc,
-            a.shrout,
-            ABS(a.prc) * a.shrout / 1000 AS me,  -- market equity ($M)
-            a.vol,
-            a.shrcd,
-            a.exchcd,
-            a.siccd
-        FROM crsp.msf AS a
-        INNER JOIN crsp.msenames AS b
-            ON a.permno = b.permno
-            AND b.namedt <= a.date
-            AND a.date <= b.nameenddt
-        WHERE a.date BETWEEN '{start}' AND '{end}'
-          AND b.exchcd = 1         -- NYSE only
-          AND b.shrcd IN (10, 11)  -- common stocks only
-          AND ABS(a.prc) > 0
-    """
+    SELECT
+        a.permno,
+        a.date,
+        a.ret,
+        a.retx,
+        ABS(a.prc) AS prc,
+        a.shrout,
+        ABS(a.prc) * a.shrout / 1000 AS me,
+        a.vol,
+        b.shrcd,
+        b.exchcd,
+        b.siccd
+    FROM crsp.msf AS a
+    INNER JOIN crsp.msenames AS b
+        ON a.permno = b.permno
+        AND b.namedt <= a.date
+        AND a.date <= b.nameendt
+    WHERE a.date BETWEEN '{start}' AND '{end}'
+      AND b.exchcd = 1
+      AND b.shrcd IN (10, 11)
+      AND ABS(a.prc) > 0
+"""
     df = db.raw_sql(query, date_cols=["date"])
     db.close()
 
@@ -115,53 +115,57 @@ def download_crsp(start: str = "1971-01-01", end: str = "2025-12-31") -> pd.Data
 # =============================================================
 
 def download_characteristics() -> pd.DataFrame:
-    """
-    Downloads the stock characteristic panel from Dacheng Xiu's website
-    (covers ~94 predictors from the literature, monthly, up to 2021).
-
-    For the 2022-2025 extension, characteristics are computed from
-    Compustat/CRSP by data_processing.py.
-
-    Returns:
-        DataFrame with columns [permno, date, <94 characteristics>]
-        Saved to CHARACTERISTICS_FILE for reuse.
-    """
     if CHARACTERISTICS_FILE.exists():
         logger.info(f"Loading characteristics from cache: {CHARACTERISTICS_FILE}")
         return pd.read_parquet(CHARACTERISTICS_FILE)
 
-    # Primary URL: Xiu's EquityCharacteristics dataset
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import shutil
+
     url = "https://dachxiu.chicagobooth.edu/download/datashare.zip"
-    logger.info(f"Downloading characteristics dataset from: {url}")
+    zip_path = DATA_DIR / "datashare.zip"
 
-    try:
-        resp = requests.get(url, timeout=300)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        logger.error(f"Failed to download characteristics: {e}")
-        raise
+    # Download only if zip not already on disk
+    if not zip_path.exists():
+        logger.info(f"Downloading characteristics dataset from: {url}")
+        with requests.get(url, timeout=300, stream=True) as resp:
+            resp.raise_for_status()
+            with open(zip_path, "wb") as f:
+                shutil.copyfileobj(resp.raw, f)
 
-    # The zip contains a single CSV file
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+    # Extract CSV to disk
+    logger.info("Extracting zip to disk...")
+    with zipfile.ZipFile(zip_path) as z:
         fname = [f for f in z.namelist() if f.endswith(".csv")][0]
-        logger.info(f"Extracting: {fname}")
-        with z.open(fname) as f:
-            df = pd.read_csv(f, low_memory=False)
+        z.extract(fname, DATA_DIR)
+        extracted_path = DATA_DIR / fname
 
-    # Standardize column names to lowercase
-    df.columns = df.columns.str.lower().str.strip()
+    # Read in chunks and write directly to parquet (no RAM accumulation)
+    logger.info("Converting CSV to parquet in chunks...")
+    writer = None
+    for chunk in pd.read_csv(extracted_path, low_memory=False, chunksize=50000):
+        chunk.columns = chunk.columns.str.lower().str.strip()
+        if "date" in chunk.columns:
+            chunk["date"] = pd.to_datetime(chunk["date"].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
+        elif "yyyymm" in chunk.columns:
+            chunk["date"] = pd.to_datetime(chunk["yyyymm"].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
+            chunk.drop(columns=["yyyymm"], inplace=True)
 
-    # Parse date column (format: YYYYMM → period end)
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
-    elif "yyyymm" in df.columns:
-        df["date"] = pd.to_datetime(df["yyyymm"].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
-        df.drop(columns=["yyyymm"], inplace=True)
+        table = pa.Table.from_pandas(chunk)
+        if writer is None:
+            writer = pq.ParquetWriter(str(CHARACTERISTICS_FILE), table.schema)
+        writer.write_table(table)
 
-    df = df.sort_values(["permno", "date"]).reset_index(drop=True)
-    df.to_parquet(CHARACTERISTICS_FILE, index=False)
-    logger.info(f"Characteristics saved: {len(df):,} rows → {CHARACTERISTICS_FILE}")
-    return df
+    if writer:
+        writer.close()
+
+    # Clean up temporary files
+    zip_path.unlink()
+    extracted_path.unlink()
+
+    logger.info(f"Characteristics saved to {CHARACTERISTICS_FILE}")
+    return pd.read_parquet(CHARACTERISTICS_FILE)
 
 
 # =============================================================
