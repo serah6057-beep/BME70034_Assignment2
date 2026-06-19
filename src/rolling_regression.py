@@ -79,7 +79,15 @@ def run_rolling_predictions(
     feature_importances: dict[str, list] = {m: [] for m in models}
 
     # ---- Rolling loop ----
-    splits = list(rolling_splits(panel, test_start_year=1987))
+    from src.settings import TRAIN_YEARS, VALIDATION_YEARS
+    
+    # Sample start year + train + validation years = first possible test year
+    start_year = pd.DatetimeIndex(panel["date"]).year.min()
+    test_start = start_year + TRAIN_YEARS + VALIDATION_YEARS
+    
+    logger.info(f"Auto-computed test_start_year={test_start} from data start={start_year}")
+    
+    splits = list(rolling_splits(panel, test_start_year=test_start))
     logger.info(f"Running {len(splits)} rolling windows × {len(models)} models")
 
     for split in tqdm(splits, desc="Rolling windows"):

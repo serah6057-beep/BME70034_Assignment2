@@ -53,9 +53,9 @@ SAMPLE_PERIODS = {
 }
 
 # Rolling window splits (GKX 2020 convention)
-TRAIN_YEARS      = 18   # Minimum initial training window (years)
-VALIDATION_YEARS = 12   # Rolling validation window (years) — for hyperparameter tuning
-TEST_START_YEAR  = 1987 # Out-of-sample evaluation starts here (after 18yr train + early burn-in)
+TRAIN_YEARS      = 5   # Minimum initial training window (years)
+VALIDATION_YEARS = 2  # Rolling validation window (years) — for hyperparameter tuning
+TEST_START_YEAR  = 2013 # Out-of-sample evaluation starts here (after 18yr train + early burn-in)
 
 # Minimum number of stocks per month (filter months with thin coverage)
 MIN_STOCKS_PER_MONTH = 5
