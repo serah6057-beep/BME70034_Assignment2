@@ -175,50 +175,41 @@ def download_characteristics() -> pd.DataFrame:
 def download_macro_predictors() -> pd.DataFrame:
     """
     Downloads Welch-Goyal (2008) macro predictors used in GKX 2020.
-    Source: Amit Goyal's website (updated annually).
-
-    Returns:
-        DataFrame indexed by date (monthly) with 14 macro predictor columns.
-        Saved to MACRO_FILE for reuse.
+    Source: Amit Goyal's website (PredictorData2023.xlsx).
     """
     if MACRO_FILE.exists():
         logger.info(f"Loading macro predictors from cache: {MACRO_FILE}")
         return pd.read_parquet(MACRO_FILE)
 
-    url = "https://docs.google.com/spreadsheets/d/1OKFQlPQn28PVqDxd1XQPnuFqPZJnDQFW/export?format=csv"
-    logger.info("Downloading Welch-Goyal macro predictors...")
+    # Goyal's current data file (updated periodically)
+    url = "https://sites.google.com/view/agoyal145/PredictorData2023.xlsx?attredirects=0&d=1"
+    logger.info("Downloading Welch-Goyal macro predictors from Goyal's site...")
 
     try:
-        df = pd.read_csv(url, index_col=0, parse_dates=True)
-    except Exception:
-        # Fallback: Tidy Finance approach via pandas-datareader
-        logger.warning("Primary URL failed; trying Tidy Finance approach...")
-        df = _download_macro_tidy_finance()
+        df = pd.read_excel(url, sheet_name="Monthly")
+    except Exception as e:
+        logger.warning(f"Goyal URL failed: {e}. Trying GitHub mirror...")
+        # GitHub mirror as fallback
+        url = "https://raw.githubusercontent.com/OS-Macro/macro-predictors/main/PredictorData2023.csv"
+        df = pd.read_csv(url)
 
     # Normalize column names
     df.columns = df.columns.str.lower().str.strip()
 
-    # Compute derived columns that GKX use
-    df["tms"] = df.get("lty", np.nan) - df.get("tbl", np.nan)  # term spread
-    df["dfy"] = df.get("baa", np.nan) - df.get("aaa", np.nan)  # default yield spread
-
-    # Ensure monthly frequency aligned to month-end
-    df.index = pd.to_datetime(df.index) + pd.offsets.MonthEnd(0)
-    df.index.name = "date"
+    # Date column handling
+    date_col = "yyyymm" if "yyyymm" in df.columns else "date"
+    df["date"] = pd.to_datetime(df[date_col].astype(str), format="%Y%m") + pd.offsets.MonthEnd(0)
+    df = df.set_index("date").drop(columns=[date_col], errors="ignore")
     df = df.sort_index()
+
+    # Compute derived columns used in GKX
+    if "lty" in df.columns and "tbl" in df.columns:
+        df["tms"] = df["lty"] - df["tbl"]
+    if "baa" in df.columns and "aaa" in df.columns:
+        df["dfy"] = df["baa"] - df["aaa"]
 
     df.to_parquet(MACRO_FILE)
     logger.info(f"Macro predictors saved: {len(df)} months → {MACRO_FILE}")
-    return df
-
-
-def _download_macro_tidy_finance() -> pd.DataFrame:
-    """
-    Fallback: downloads macro predictors following the Tidy Finance approach.
-    """
-    url = "https://www.dropbox.com/s/whifmrnz0rr7lrv/macro_predictors.csv?dl=1"
-    df = pd.read_csv(url, parse_dates=["yyyymm"])
-    df = df.rename(columns={"yyyymm": "date"}).set_index("date")
     return df
 
 
