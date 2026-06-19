@@ -1,0 +1,37 @@
+# =============================================================
+# requirements.txt - Assignment 3: Empirical Asset Pricing via ML
+# Install with: pip install -r requirements.txt
+# Python >= 3.10 recommended
+# =============================================================
+
+# Core data manipulation
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# Data download / access
+wrds>=3.1.2               # WRDS Python interface (for CRSP data)
+pandas-datareader>=0.10.0 # Ken French data library
+requests>=2.31.0
+
+# Machine Learning models
+scikit-learn>=1.3.0       # OLS, PCR, ENet, RF
+torch>=2.0.0              # Neural Networks (NN2, NN4)
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Statistical utilities
+statsmodels>=0.14.0
+
+# Progress bars and logging
+tqdm>=4.65.0
+
+# PDF generation for final output
+reportlab>=4.0.0
+fpdf2>=2.7.0
+
+# Utilities
+python-dotenv>=1.0.0      # Load environment variables (WRDS credentials)
+PyYAML>=6.0

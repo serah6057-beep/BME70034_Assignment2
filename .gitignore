@@ -1,0 +1,57 @@
+# =============================================================
+# .gitignore for Assignment 3 - Empirical Asset Pricing via ML
+# IMPORTANT: Do NOT upload any raw proprietary data (CRSP, Compustat)
+# =============================================================
+
+# Raw data files (CRSP, Compustat) - must not be uploaded
+data/
+*.csv
+*.parquet
+*.pkl
+*.feather
+*.h5
+*.hdf5
+*.dta       # Stata files
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+*.egg
+*.egg-info/
+
+# Virtual environment
+venv/
+env/
+.env
+.venv/
+
+# IDE / OS artifacts
+.vscode/settings.json
+.cursor/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Jupyter notebooks (optional, keep if needed)
+.ipynb_checkpoints/
+
+# Log files (keep only in results/logs, not root)
+*.log
+
+# Model checkpoints (large files)
+*.pt
+*.pth
+*.ckpt
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Results PDFs are outputs - keep them tracked if small
+# results/figures/ - track these (generated plots)
+# results/tables/  - track these (generated tables)
