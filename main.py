@@ -5,7 +5,7 @@ Central pipeline controller for Assignment 2:
 "Replication of Gu, Kelly, and Xiu (2020) – Empirical Asset Pricing via ML"
 
 Usage:
-    python main.py [--period {1971_2016,1971_2025,both}] [--skip-download]
+    python main.py [--period {1971_2025,2006_2025,both}] [--skip-download]
 
 This script runs the full end-to-end workflow:
   1. Download data (CRSP, characteristics, macro predictors, risk-free rate)

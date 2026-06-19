@@ -59,17 +59,18 @@ def download_crsp(start: str = "1971-01-01", end: str = "2025-12-31") -> pd.Data
         return pd.read_parquet(CRSP_FILE)
 
     load_dotenv()
+
     logger.info("Downloading CRSP monthly data from WRDS...")
     try:
         import wrds
     except ImportError:
         raise ImportError("Install 'wrds' package: pip install wrds")
 
-    # Connect to WRDS (requires WRDS account + ~/.pgpass or env vars)
-    db = wrds.Connection(
-        wrds_username=os.getenv("WRDS_USERNAME"),
-        wrds_password=os.getenv("WRDS_PASSWORD"),
-    )
+    # Connect to WRDS using credentials from .env
+    os.environ["WRDS_USERNAME"] = os.getenv("WRDS_USERNAME")
+    os.environ["WRDS_PASSWORD"] = os.getenv("WRDS_PASSWORD")
+
+    db = wrds.Connection()
 
     query = f"""
         SELECT

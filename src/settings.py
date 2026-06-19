@@ -48,8 +48,8 @@ SP500_FILE         = DATA_DIR / "sp500_returns.parquet"      # S&P 500 total ret
 # =============================================================
 # Two separate sample periods required by the assignment
 SAMPLE_PERIODS = {
-    "1971_2016": {"start": "1971-01-01", "end":   "2016-12-31"},
     "1971_2025": {"start": "1971-01-01", "end":   "2025-12-31"},
+    "2006_2025": {"start": "2006-01-01", "end":   "2025-12-31"},
 }
 
 # Rolling window splits (GKX 2020 convention)
@@ -189,7 +189,7 @@ NN_PARAMS = {
 
 # Ensemble: batch normalization is applied in each NN hidden layer
 NN_BATCH_NORM   = True
-NN_ENSEMBLE_N   = 10    # GKX 2020 average 10 random restarts
+NN_ENSEMBLE_N   = 5    # GKX 2020 average 10 random restarts
 NN_RANDOM_SEED  = 42
 
 # =============================================================
