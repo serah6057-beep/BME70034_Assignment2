@@ -111,6 +111,9 @@ CHARACTERISTIC_COLUMNS = [
     "zerotrade",
 ]
 
+# Remove duplicates while preserving order
+CHARACTERISTIC_COLUMNS = list(dict.fromkeys(CHARACTERISTIC_COLUMNS))
+
 # =============================================================
 # MACRO PREDICTORS (Welch-Goyal 2008; used in GKX 2020)
 # Exactly 8 variables as specified in GKX (2020), p. 2248
