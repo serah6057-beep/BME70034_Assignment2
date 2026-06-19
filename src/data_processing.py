@@ -187,75 +187,64 @@ def build_interaction_features(
     char_cols: list[str],
     start: str = "1971",
 ) -> pd.DataFrame:
+    """
+    Build macro interaction features YEAR-BY-YEAR to keep memory usage low.
+    Following the Tidy Finance GKX replication guide.
+    """
     cache_file = DATA_DIR / f"characteristics_with_interactions_{start[:4]}.parquet"
-    """
-    Build macro interaction features using numpy arrays for memory efficiency.
-    """
     if cache_file.exists():
         logger.info(f"Loading interaction features from cache: {cache_file}")
         return pd.read_parquet(cache_file)
 
-    logger.info("Building macro interaction features (chunked to disk)...")
+    logger.info("Building macro interaction features (year-by-year)...")
 
     # Rename macro columns to avoid collision
     macro_renamed = macro_df.add_prefix("macro_")
     macro_cols = macro_renamed.columns.tolist()
     macro_lagged = macro_renamed.shift(1)
 
-    # Merge macro into char_df
-    merged = char_df.join(macro_lagged, on="date", how="left")
+    # Merge macro
+    char_df = char_df.join(macro_lagged, on="date", how="left")
 
-    # Save base (chars + macros, no interactions yet) to disk
-    base_file = DATA_DIR / "_tmp_base.parquet"
-    logger.info("  Saving base panel (chars + macros) to disk...")
-    merged.to_parquet(base_file, index=False)
+    # Process year-by-year, append to parquet
+    char_df["year"] = pd.to_datetime(char_df["date"]).dt.year
+    years = sorted(char_df["year"].unique())
 
-    # Extract char array once (smaller, stays in RAM)
-    char_arr = merged[char_cols].values.astype("float32")
-    n_rows = len(merged)
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    writer = None
 
-    # Save IDs for later merging
-    id_cols = [c for c in ["permno", "date"] if c in merged.columns]
-    
-    # For each macro, compute interactions and save to separate parquet
-    tmp_files = []
-    for m in macro_cols:
-        logger.info(f"  Building interactions with {m}...")
-        m_values = merged[m].values.astype("float32").reshape(-1, 1)
-        inter = char_arr * m_values  # (N, P)
+    for yr in years:
+        logger.info(f"  Building interactions for year {yr}...")
+        year_df = char_df[char_df["year"] == yr].copy()
         
-        cols = [f"{c}_x_{m}" for c in char_cols]
-        inter_df = pd.DataFrame(inter, columns=cols)
+        # Compute interactions for this year only
+        char_arr = year_df[char_cols].values.astype("float32")
+        new_cols_data = {}
+        for m in macro_cols:
+            m_values = year_df[m].values.astype("float32").reshape(-1, 1)
+            inter = char_arr * m_values
+            for i, c in enumerate(char_cols):
+                new_cols_data[f"{c}_x_{m}"] = inter[:, i]
         
-        tmp = DATA_DIR / f"_tmp_inter_{m}.parquet"
-        inter_df.to_parquet(tmp, index=False)
-        tmp_files.append(tmp)
-        del inter, inter_df
+        inter_df = pd.DataFrame(new_cols_data, index=year_df.index)
+        year_full = pd.concat([year_df.drop(columns=["year"]), inter_df], axis=1)
+        
+        # Append to parquet
+        table = pa.Table.from_pandas(year_full)
+        if writer is None:
+            writer = pq.ParquetWriter(str(cache_file), table.schema)
+        writer.write_table(table)
+        
+        del year_df, inter_df, year_full, char_arr, new_cols_data
 
-    del char_arr, merged
-
-    # Now reassemble: load base + each interaction file column-by-column
-    logger.info("  Reassembling full interaction matrix from disk...")
-    result = pd.read_parquet(base_file)
-    for tmp in tmp_files:
-        chunk = pd.read_parquet(tmp)
-        for col in chunk.columns:
-            result[col] = chunk[col].values
-        del chunk
+    if writer:
+        writer.close()
 
     n_features = len(char_cols) * (len(macro_cols) + 1)
-    logger.info(f"Feature matrix built: {n_features} total features")
+    logger.info(f"Feature matrix built: {n_features} total features → {cache_file}")
 
-    # Cache final result
-    logger.info(f"Caching interaction features to {cache_file}")
-    result.to_parquet(cache_file, index=False)
-
-    # Clean up temp files
-    base_file.unlink()
-    for tmp in tmp_files:
-        tmp.unlink()
-
-    return result
+    return pd.read_parquet(cache_file)
 
 
 # =============================================================
