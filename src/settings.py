@@ -144,21 +144,21 @@ OLS3_FEATURES = ["mvel1", "bm", "mom12m"]   # Size, B/M, 12m momentum
 
 # --- Principal Component Regression (PCR) ---
 PCR_PARAMS = {
-    "n_components_grid": [5, 10, 15, 20, 30, 50],  # Grid search candidates
+    "n_components_grid": [10, 30],  # Grid search candidates
 }
 
 # --- Elastic Net (ENet+H: Huber loss + elastic net penalty) ---
 ENET_PARAMS = {
-    "l1_ratio_grid":  [0.1, 0.5, 0.9, 1.0],  # 1.0 = pure Lasso
-    "alpha_grid":     [0.0001, 0.001, 0.01, 0.1],
+    "l1_ratio_grid":  [0.5],  # 1.0 = pure Lasso
+    "alpha_grid":     [0.0001, 0.01],
     "huber_epsilon":  1.345,
 }
 
 # --- Random Forest (RF) ---
 RF_PARAMS = {
-    "n_estimators":           300,                       # paper fixes at 300
-    "max_features_grid":      [3, 5, 10, 20, 30, 50],   # paper grid
-    "min_samples_leaf_grid":  [5000, 10000],            # paper grid
+    "n_estimators":           100,                       # paper fixes at 300
+    "max_features_grid":      [5, 10, 30],   # paper grid
+    "min_samples_leaf_grid":  [5000],            # paper grid
     "n_jobs":                 -1,
     "random_state":           42,
 }
@@ -168,13 +168,13 @@ NN_PARAMS = {
     "NN2": {
         "hidden_layers": [32, 16],
         "dropout":       0.05,
-        "batch_size":    10000,
+        "batch_size":    20000,
         "lr":            0.001,
-        "epochs":        100,
-        "patience":      5,      # Early stopping patience
+        "epochs":        50,
+        "patience":      3,      # Early stopping patience
     },
     "NN4": {
-        "hidden_layers": [256, 128, 64, 32],
+        "hidden_layers": [128, 64, 32, 16],
         "dropout":       0.05,
         "batch_size":    10000,
         "lr":            0.001,
@@ -185,7 +185,7 @@ NN_PARAMS = {
 
 # Ensemble: batch normalization is applied in each NN hidden layer
 NN_BATCH_NORM   = True
-NN_ENSEMBLE_N   = 5    # GKX 2020 average 10 random restarts
+NN_ENSEMBLE_N   = 3    # GKX 2020 average 10 random restarts
 NN_RANDOM_SEED  = 42
 
 # =============================================================
