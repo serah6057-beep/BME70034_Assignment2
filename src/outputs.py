@@ -283,10 +283,24 @@ def generate_figure9(
         ls_rets   = long_short_portfolio(decile_df)
         port_rets[model_name] = ls_rets
 
-    # S&P 500 excess return (SP500 - Rf)
-    common_dates = rf_rets.index.intersection(sp500_rets.index)
-    sp500_excess = sp500_rets.loc[common_dates] - rf_rets.loc[common_dates]
-    port_rets["SP500-Rf"] = sp500_excess
+    # Determine OOS date range from model portfolios
+    oos_dates = set()
+    for series in port_rets.values():
+        oos_dates.update(series.index)
+    oos_start = min(oos_dates)
+    oos_end = max(oos_dates)
+
+    # S&P 500 excess return (SP500 - Rf) — restricted to OOS period
+    if not sp500_rets.empty and not rf_rets.empty:
+        common_dates = rf_rets.index.intersection(sp500_rets.index)
+        sp500_excess = sp500_rets.loc[common_dates] - rf_rets.loc[common_dates]
+        sp500_excess = sp500_excess[(sp500_excess.index >= oos_start) & (sp500_excess.index <= oos_end)]
+        if len(sp500_excess) > 0:
+            port_rets["SP500-Rf"] = sp500_excess
+        else:
+            logger.warning("SP500-Rf has no data in OOS period")
+    else:
+        logger.warning("SP500 or RF data is empty; skipping SP500-Rf benchmark")
 
     # ---- Plot ----
     fig, ax = plt.subplots(figsize=(14, 7))
@@ -313,7 +327,8 @@ def generate_figure9(
     ax.set_ylabel("Log Cumulative Excess Return", fontsize=12)
     ax.legend(loc="upper left", fontsize=10, framealpha=0.8)
     ax.grid(True, alpha=0.3)
-    ax.xaxis.set_major_locator(YearLocator(5))
+    ax.set_xlim(oos_start, oos_end)
+    ax.xaxis.set_major_locator(YearLocator(1))
     ax.xaxis.set_major_formatter(DateFormatter("%Y"))
     plt.xticks(rotation=30)
 
