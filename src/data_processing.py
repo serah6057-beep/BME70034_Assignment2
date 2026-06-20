@@ -106,18 +106,18 @@ def load_rf() -> pd.Series:
 # =============================================================
 # 2. CROSS-SECTIONAL RANKING AND SCALING  (GKX 2020, Section 2.3)
 # =============================================================
-"""
+
+def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str], start: str = "1971") -> pd.DataFrame:
+
+    """
     GKX (2020) cross-sectional rank-scaling:
       1. Rank each characteristic within month → map to [-1, 1].
       2. Replace remaining missing values with cross-sectional median.
       3. Any still-missing values (entire-month NaN) → 0.
     """
 
-def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str], start: str = "1971") -> pd.DataFrame:
     cache_file = DATA_DIR / f"characteristics_scaled_{start[:4]}.parquet"
-    """
-    GKX (2020) cross-sectional rank-scaling with caching.
-    """
+    
     if cache_file.exists():
         logger.info(f"Loading rank-scaled characteristics from cache: {cache_file}")
         return pd.read_parquet(cache_file)
@@ -162,7 +162,15 @@ def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str], start: st
 # =============================================================
 # 3. MACRO INTERACTION FEATURES  (GKX 2020, Section 2.2)
 # =============================================================
-"""
+
+def build_interaction_features(
+    char_df: pd.DataFrame,
+    macro_df: pd.DataFrame,
+    char_cols: list[str],
+    start: str = "1971",
+) -> pd.DataFrame:
+    
+    """
     Constructs the full feature matrix by interacting firm characteristics
     with macro predictors as in GKX (2020):
 
@@ -180,14 +188,7 @@ def rank_scale_characteristics(df: pd.DataFrame, char_cols: list[str], start: st
 
     Returns:
         DataFrame with [permno, date, <original chars>, <interaction cols>].
-    """
-def build_interaction_features(
-    char_df: pd.DataFrame,
-    macro_df: pd.DataFrame,
-    char_cols: list[str],
-    start: str = "1971",
-) -> pd.DataFrame:
-    """
+   
     Build macro interaction features YEAR-BY-YEAR to keep memory usage low.
     Following the Tidy Finance GKX replication guide.
     """

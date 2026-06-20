@@ -149,7 +149,7 @@ def run_pipeline(
     # Step 5: Generate all outputs
     # -------------------------------------------------------
     logger.info("STEP 5: Generating tables and figures")
-    '''
+    
     generate_all_outputs(
         all_predictions=all_predictions,
         feature_importances=feature_importances,
@@ -158,16 +158,7 @@ def run_pipeline(
         rf_rets=rf_rets,
         period_label=period_label,
     )
-    '''
-    # Step 5: Regenerate only Figure 9
-    from src.outputs import generate_figure9, NBER_RECESSIONS
-    generate_figure9(
-        all_predictions=all_predictions,
-        sp500_rets=sp500_rets,
-        rf_rets=rf_rets,
-        period_label=period_label,
-        nber_recessions=NBER_RECESSIONS,
-        )
+    
 
     elapsed = time.time() - t0
     logger.info(f"Pipeline for {period_label} completed in {elapsed/60:.1f} minutes.")
