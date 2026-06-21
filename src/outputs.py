@@ -259,21 +259,10 @@ def generate_figure9(
 ) -> None:
     """
     Generates Figure 9: Cumulative Return of Machine Learning Portfolios.
-
-    Plots the log cumulative excess return of long-short portfolios for
-    each model, plus the S&P 500 excess return benchmark.
-    NBER recession shading is added if recession dates are provided.
-
-    Args:
-        all_predictions: {model_name: DataFrame[date, ret_excess, y_pred, me]}
-        sp500_rets:      Monthly S&P 500 total returns.
-        rf_rets:         Monthly risk-free rate.
-        period_label:    For filename.
-        nber_recessions: List of (start, end) tuples for recession shading.
     """
     logger.info(f"Generating Figure 9 for period {period_label}...")
 
-    # Build long-short portfolio returns
+    # ---- Build long-short portfolio returns per model ----
     port_rets = {}
     for model_name in MODELS_FIG9:
         if model_name not in all_predictions:
@@ -283,51 +272,75 @@ def generate_figure9(
         ls_rets   = long_short_portfolio(decile_df)
         port_rets[model_name] = ls_rets
 
-    # Determine OOS date range from model portfolios
-    oos_dates = set()
-    for series in port_rets.values():
-        oos_dates.update(series.index)
-    oos_start = min(oos_dates)
-    oos_end = max(oos_dates)
+    if not port_rets:
+        logger.warning("No model portfolios available for Figure 9")
+        return
 
-    # S&P 500 excess return (SP500 - Rf) — restricted to OOS period
+    # ---- Determine the OOS date range from model predictions ----
+    all_dates = set()
+    for s in port_rets.values():
+        all_dates.update(s.index)
+    oos_start = min(all_dates)
+    oos_end   = max(all_dates)
+    logger.info(f"  OOS window: {oos_start.date()} → {oos_end.date()}")
+
+    # ---- Add SP500-Rf benchmark, restricted to OOS window ----
     if not sp500_rets.empty and not rf_rets.empty:
-        common_dates = rf_rets.index.intersection(sp500_rets.index)
-        sp500_excess = sp500_rets.loc[common_dates] - rf_rets.loc[common_dates]
-        sp500_excess = sp500_excess[(sp500_excess.index >= oos_start) & (sp500_excess.index <= oos_end)]
+        common = rf_rets.index.intersection(sp500_rets.index)
+        sp500_excess = (sp500_rets.loc[common] - rf_rets.loc[common])
+        sp500_excess = sp500_excess[
+            (sp500_excess.index >= oos_start) & (sp500_excess.index <= oos_end)
+        ]
         if len(sp500_excess) > 0:
             port_rets["SP500-Rf"] = sp500_excess
+            logger.info(f"  SP500-Rf benchmark added: {len(sp500_excess)} months")
         else:
-            logger.warning("SP500-Rf has no data in OOS period")
+            logger.warning("  SP500-Rf has no overlap with OOS window")
     else:
-        logger.warning("SP500 or RF data is empty; skipping SP500-Rf benchmark")
+        logger.warning("  SP500 or RF data missing; skipping SP500-Rf")
 
     # ---- Plot ----
     fig, ax = plt.subplots(figsize=(14, 7))
 
     for model_name, ret_series in port_rets.items():
-        cum_ret = np.log(cumulative_return(ret_series))   # log cumulative
+        # Filter to OOS window only (for SP500-Rf too)
+        s = ret_series[(ret_series.index >= oos_start) & (ret_series.index <= oos_end)]
+        cum_ret = np.log(cumulative_return(s))
         color   = MODEL_COLORS.get(model_name, "black")
         ls      = "--" if model_name == "SP500-Rf" else "-"
-        lw      = 1.5 if model_name == "SP500-Rf" else 1.2
-        ax.plot(cum_ret.index, cum_ret.values,
-                label=model_name, color=color, linestyle=ls, linewidth=lw)
+        lw      = 2.0  if model_name == "SP500-Rf" else 1.4
+        ax.plot(
+            cum_ret.index, cum_ret.values,
+            label=model_name, color=color, linestyle=ls, linewidth=lw,
+        )
 
-    # NBER recession shading
+    # ---- NBER recession shading (only inside OOS window) ----
     if nber_recessions:
         for rec_start, rec_end in nber_recessions:
-            ax.axvspan(pd.Timestamp(rec_start), pd.Timestamp(rec_end),
-                       color="gray", alpha=0.20, zorder=0)
+            rs = pd.Timestamp(rec_start)
+            re = pd.Timestamp(rec_end)
+            # Only shade if recession overlaps OOS window
+            if re >= oos_start and rs <= oos_end:
+                ax.axvspan(
+                    max(rs, oos_start), min(re, oos_end),
+                    color="gray", alpha=0.20, zorder=0,
+                )
 
+    # ---- Axis cosmetics ----
     ax.set_title(
         f"Figure 9: Cumulative Return of ML Portfolios  [{period_label.replace('_', '–')}]",
         fontsize=14, fontweight="bold",
     )
     ax.set_xlabel("Date", fontsize=12)
     ax.set_ylabel("Log Cumulative Excess Return", fontsize=12)
-    ax.legend(loc="upper left", fontsize=10, framealpha=0.8)
+    ax.legend(loc="upper left", fontsize=10, framealpha=0.9, ncol=2)
     ax.grid(True, alpha=0.3)
+    ax.axhline(0, color="black", linewidth=0.5, linestyle=":")
+
+    # Tight x-axis to OOS window
     ax.set_xlim(oos_start, oos_end)
+
+    # Yearly ticks
     ax.xaxis.set_major_locator(YearLocator(1))
     ax.xaxis.set_major_formatter(DateFormatter("%Y"))
     plt.xticks(rotation=30)

@@ -167,6 +167,266 @@ def download_characteristics() -> pd.DataFrame:
     logger.info(f"Characteristics saved to {CHARACTERISTICS_FILE}")
     return pd.read_parquet(CHARACTERISTICS_FILE)
 
+# =============================================================
+# CHARACTERISTICS EXTENSION (Xiu + OSAP 2017-2024)
+# =============================================================
+
+# Complete Xiu ↔ OSAP variable name mapping
+XIU_TO_OSAP = {
+    # ===== Direct matches =====
+    "acc":        "Accruals",
+    "agr":        "AssetGrowth",
+    "bm":         "BM",
+    "cash":       "Cash",
+    "cfp":        "cfp",
+    "chinv":      "ChInv",
+    "chnanalyst": "ChNAnalyst",
+    "chtx":       "ChTax",
+    "convind":    "ConvDebt",
+    "divi":       "DivInit",
+    "divo":       "DivOmit",
+    "dolvol":     "DolVol",
+    "ear":        "EarningsSurprise",
+    "ep":         "EP",
+    "gma":        "GP",
+    "grcapx":     "grcapx",
+    "grltnoa":    "GrLTNOA",
+    "herf":       "Herf",
+    "hire":       "hire",
+    "idiovol":    "IdioVol3F",
+    "ill":        "Illiquidity",
+    "indmom":     "IndMom",
+    "invest":     "Investment",
+    "lev":        "Leverage",
+    "maxret":     "MaxRet",
+    "mom12m":     "Mom12m",
+    "mom1m":      "STreversal",
+    "mom36m":     "LRreversal",
+    "mom6m":      "Mom6m",
+    "ms":         "MS",
+    "nincr":      "NumEarnIncrease",
+    "operprof":   "OperProf",
+    "orgcap":     "OrgCap",
+    "pctacc":     "PctAcc",
+    "pricedelay": "PriceDelayRsq",
+    "ps":         "PS",
+    "rd":         "RD",
+    "realestate": "realestate",
+    "retvol":     "RealizedVol",
+    "roaq":       "roaq",
+    "roeq":       "RoE",
+    "sgr":        "GrSaleToGrInv",
+    "sin":        "sinAlgo",
+    "sp":         "SP",
+    "std_turn":   "std_turn",
+    "tang":       "tang",
+    "zerotrade":  "zerotrade1M",
+    # ===== Derived (computed from OSAP) =====
+    "absacc":     "Accruals",
+    "baspread":   "BidAskSpread",
+    "beta":       "Beta",
+    "betasq":     "Beta",
+    "chcsho":     "ShareIss1Y",
+    "chmom":      "MomVol",
+    "egr":        "ChEQ",
+    "mvel1":      "Size",
+    "stdacc":     "Accruals",
+    "stdcf":      "VarCF",
+    # ===== Industry-adjusted proxies =====
+    "bm_ia":      "BM",
+    "cfp_ia":     "cfp",
+    "chatoia":    "ChAssetTurnover",
+    "chempia":    "hire",
+    "chpmia":     "OperProf",
+    "mve_ia":     "Size",
+    "pchcapx_ia": "grcapx",
+    # ===== Closest available proxies =====
+    "age":            "AgeIPO",
+    "cinvest":        "InvestPPEInv",
+    "dy":             "PayoutYield",
+    "pchsaleinv":     "GrSaleToGrInv",
+    "rd_mve":         "RD",
+    "rd_sale":        "RD",
+    "roic":           "RoE",
+    "rsup":           "RevenueSurprise",
+    "tb":             "ChTax",
+}
+
+# Xiu variables with NO OSAP counterpart — filled with 0 for 2017-2024
+XIU_NO_OSAP = [
+    "aeavol", "cashdebt", "cashpr", "currat", "depr",
+    "pchcurrat", "pchdepr", "pchgm_pchsale", "pchquick",
+    "pchsale_pchinvt", "pchsale_pchrect", "pchsale_pchxsga",
+    "quick", "roavol", "salecash", "saleinv", "salerec",
+    "secured", "securedind", "std_dolvol", "turn",
+]
+
+def extend_characteristics_with_osap() -> pd.DataFrame:
+    """
+    Extends the Xiu characteristics dataset (ends in 2016) with
+    Open Source Asset Pricing data (Chen & Zimmermann) for 2017-2024.
+    
+    Memory-safe: downloads OSAP signals ONE AT A TIME, filters to 2017-2024,
+    downcasts to float32, and caches everything to disk.
+    
+    Variables are renamed from OSAP convention to Xiu/GKX convention.
+    Xiu variables that have no OSAP counterpart are filled with 0
+    for the 2017-2024 extension.
+    """
+    extended_file = DATA_DIR / "characteristics_extended.parquet"
+    if extended_file.exists():
+        logger.info(f"Loading extended characteristics from cache: {extended_file}")
+        return pd.read_parquet(extended_file)
+
+    # 1) Load existing Xiu characteristics (≤ 2016)
+    logger.info("Loading existing Xiu characteristics...")
+    xiu_df = pd.read_parquet(CHARACTERISTICS_FILE)
+    xiu_df["date"] = pd.to_datetime(xiu_df["date"]) + pd.offsets.MonthEnd(0)
+    xiu_df = xiu_df[xiu_df["date"] <= "2016-12-31"]
+
+    # Identify Xiu's full variable set (excluding identifier columns)
+    xiu_cols = [c for c in xiu_df.columns if c not in ("permno", "date", "sic2")]
+
+    # 2) Download / load OSAP signals for 2017-2024 (memory-safe)
+    try:
+        from openassetpricing import OpenAP
+    except ImportError:
+        raise ImportError("Install openassetpricing: pip install openassetpricing")
+
+    osap_needed = sorted(set(v for v in XIU_TO_OSAP.values() if v is not None))
+
+    # Cache the merged OSAP raw download so we never re-fetch
+    osap_cache = DATA_DIR / "osap_raw_2017_2024.parquet"
+
+    if osap_cache.exists():
+        logger.info(f"Loading OSAP cache: {osap_cache}")
+        osap_df = pd.read_parquet(osap_cache)
+    else:
+        logger.info(f"Downloading {len(osap_needed)} OSAP signals one-by-one...")
+        oap = OpenAP()
+
+        tmp_files = []
+        for i, sig in enumerate(osap_needed, 1):
+            logger.info(f"  [{i}/{len(osap_needed)}] {sig} ...")
+            try:
+                df_one = oap.dl_signal("pandas", [sig])
+            except Exception as e:
+                logger.warning(f"    Failed to download {sig}: {e}")
+                continue
+
+            # Date conversion
+            if "yyyymm" in df_one.columns:
+                df_one["date"] = (
+                    pd.to_datetime(df_one["yyyymm"].astype(str), format="%Y%m")
+                    + pd.offsets.MonthEnd(0)
+                )
+                df_one = df_one.drop(columns=["yyyymm"])
+
+            # Filter to 2017-2024 immediately (cuts data ~5x)
+            df_one = df_one[
+                (df_one["date"] >= "2017-01-01") & (df_one["date"] <= "2024-12-31")
+            ].copy()
+
+            # Downcast to float32 to halve memory
+            for col in df_one.columns:
+                if col not in ("permno", "date"):
+                    df_one[col] = pd.to_numeric(df_one[col], errors="coerce").astype("float32")
+            df_one["permno"] = df_one["permno"].astype("int64")
+
+            # Save to per-signal temp file
+            tmp = DATA_DIR / f"_osap_tmp_{sig}.parquet"
+            df_one.to_parquet(tmp, index=False)
+            tmp_files.append((sig, tmp))
+            del df_one
+
+        # Merge all per-signal files on (permno, date)
+        logger.info("Merging per-signal files...")
+        osap_df = None
+        for sig, tmp in tmp_files:
+            chunk = pd.read_parquet(tmp)
+            if osap_df is None:
+                osap_df = chunk
+            else:
+                osap_df = osap_df.merge(chunk, on=["permno", "date"], how="outer")
+            del chunk
+            tmp.unlink()
+
+        # Cache merged result so future runs skip the entire download
+        osap_df.to_parquet(osap_cache, index=False)
+        logger.info(f"OSAP raw data cached: {osap_cache}")
+
+    logger.info(f"OSAP data: {len(osap_df):,} rows × {len(osap_df.columns)} columns")
+
+    # 3) Build the Xiu-format DataFrame from OSAP
+    logger.info("Mapping OSAP variables to Xiu format...")
+    extended_2017 = osap_df[["permno", "date"]].copy()
+
+    for xiu_var in xiu_cols:
+        osap_var = XIU_TO_OSAP.get(xiu_var)
+        if osap_var is None or osap_var not in osap_df.columns:
+            extended_2017[xiu_var] = 0.0
+        elif xiu_var == "absacc":
+            extended_2017[xiu_var] = osap_df["Accruals"].abs()
+        elif xiu_var == "betasq":
+            extended_2017[xiu_var] = osap_df["Beta"] ** 2
+        else:
+            extended_2017[xiu_var] = osap_df[osap_var].values
+
+    # Add sic2 column (NA placeholder; CRSP merge fills it later)
+    if "sic2" in xiu_df.columns:
+        extended_2017["sic2"] = pd.NA
+
+    # Log coverage diagnostic
+    logger.info("OSAP variable coverage (% non-zero, non-NaN):")
+    for xv in ["mom12m", "mom6m", "mom1m", "indmom", "ill", "bm", "ep", "beta"]:
+        if xv in extended_2017.columns:
+            v = extended_2017[xv]
+            nz = ((v.notna()) & (v != 0)).mean() * 100
+            logger.info(f"  {xv}: {nz:.1f}%")
+
+    # 4) Concatenate by streaming to parquet (memory-safe)
+    logger.info("Concatenating Xiu (≤2016) + OSAP (2017-2024) to disk...")
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    xiu_df = xiu_df.sort_values(["permno", "date"]).reset_index(drop=True)
+    extended_2017 = extended_2017.sort_values(["permno", "date"]).reset_index(drop=True)
+
+    # Align column order
+    common_cols = [c for c in xiu_df.columns if c in extended_2017.columns]
+    xiu_df = xiu_df[common_cols]
+    extended_2017 = extended_2017[common_cols]
+
+    # Align dtypes across both pieces
+    xiu_df["permno"] = xiu_df["permno"].astype("int64")
+    extended_2017["permno"] = extended_2017["permno"].astype("int64")
+    xiu_df["date"] = pd.to_datetime(xiu_df["date"])
+    extended_2017["date"] = pd.to_datetime(extended_2017["date"])
+
+    if "sic2" in common_cols:
+        xiu_df["sic2"] = pd.to_numeric(xiu_df["sic2"], errors="coerce").astype("float64")
+        extended_2017["sic2"] = pd.to_numeric(extended_2017["sic2"], errors="coerce").astype("float64")
+
+    skip = {"permno", "date", "sic2"}
+    for col in common_cols:
+        if col in skip:
+            continue
+        xiu_df[col] = pd.to_numeric(xiu_df[col], errors="coerce").astype("float32")
+        extended_2017[col] = pd.to_numeric(extended_2017[col], errors="coerce").astype("float32")
+
+    # Stream both pieces to parquet
+    table1 = pa.Table.from_pandas(xiu_df, preserve_index=False)
+    writer = pq.ParquetWriter(str(extended_file), table1.schema)
+    writer.write_table(table1)
+    del xiu_df, table1
+
+    table2 = pa.Table.from_pandas(extended_2017, preserve_index=False)
+    writer.write_table(table2)
+    del extended_2017, table2
+    writer.close()
+
+    logger.info(f"Extended characteristics saved → {extended_file}")
+    return pd.read_parquet(extended_file)
 
 # =============================================================
 # 3. MACRO PREDICTORS  (Welch & Goyal 2008)

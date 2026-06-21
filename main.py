@@ -185,6 +185,10 @@ def main() -> None:
         download_all(start="1971-01-01", end="2025-12-31")
     else:
         logger.info("STEP 1: Skipping data download (--skip-download)")
+    
+    # Extend characteristics with OSAP (for 2017-2024)
+    from src.data_download import extend_characteristics_with_osap
+    extend_characteristics_with_osap()
 
     # -------------------------------------------------------
     # Step 2: Determine which sample periods to run

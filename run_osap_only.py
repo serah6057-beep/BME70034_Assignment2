@@ -1,0 +1,2 @@
+from src.data_download import extend_characteristics_with_osap
+extend_characteristics_with_osap()

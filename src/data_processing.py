@@ -56,23 +56,31 @@ def load_crsp() -> pd.DataFrame:
 
 def load_characteristics() -> pd.DataFrame:
     """
-    Loads the stock characteristics panel.
-    Keeps only columns that exist in CHARACTERISTIC_COLUMNS.
+    Loads the EXTENDED stock characteristics panel (Xiu ≤2016 + OSAP 2017-2024).
+    Falls back to original Xiu file if extended cache not found.
     """
-    logger.info("Loading stock characteristics...")
-    df = pd.read_parquet(CHARACTERISTICS_FILE)
+    from src.settings import DATA_DIR
+    extended_file = DATA_DIR / "characteristics_extended.parquet"
+    
+    if extended_file.exists():
+        logger.info(f"Loading extended characteristics...")
+        df = pd.read_parquet(extended_file)
+    else:
+        logger.info("Loading Xiu characteristics (no extension found)...")
+        df = pd.read_parquet(CHARACTERISTICS_FILE)
+    
     df["date"] = pd.to_datetime(df["date"]) + pd.offsets.MonthEnd(0)
 
-    # Keep only the features that are both requested and available
+    # Remove duplicate columns if any
+    df = df.loc[:, ~df.columns.duplicated()]
+
     available = [c for c in CHARACTERISTIC_COLUMNS if c in df.columns]
     missing   = [c for c in CHARACTERISTIC_COLUMNS if c not in df.columns]
     if missing:
-        logger.warning(f"{len(missing)} characteristics not found and will be skipped: {missing[:5]}...")
+        logger.warning(f"{len(missing)} characteristics not found: {missing[:5]}...")
 
     keep_cols = ["permno", "date"] + available
     df = df[keep_cols]
-    # Remove duplicate columns if any exist
-    df = df.loc[:, ~df.columns.duplicated()]
     logger.info(f"Characteristics loaded: {len(available)} features, {len(df):,} rows")
     return df
 
